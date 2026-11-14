@@ -1,0 +1,49 @@
+{
+  "name": "remind-er-4-desktop",
+  "private": true,
+  "version": "4.0.0",
+  "description": "Remind-er desktop learning companion",
+  "main": "desktop.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.2.0"
+  },
+  "build": {
+    "appId": "com.reminder4.desktop",
+    "productName": "Remind-er 4.0",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop.cjs",
+      "desktop-preload.cjs",
+      "popup.html",
+      "popup.css",
+      "popup.js",
+      "index.html",
+      "supabase/**/*",
+      "README.md",
+      "LICENSE*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6"
+  },
+  "allowScripts": {
+    "electron": true,
+    "electron-winstaller": true
+  }
+}
+
