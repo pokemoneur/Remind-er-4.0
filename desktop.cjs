@@ -54,3 +54,24 @@ function createWindow() {
   windowRef.on("closed", () => { windowRef = null; });
 }
 app.whenReady().then(() => { session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => { if (selectedSource) callback({ video: selectedSource }); else callback({}); }, { useSystemPicker: false }); createWindow(); }); app.on("window-all-closed", () => app.quit());
+s.top + py * bounds.height)));
+      windowRef.hide(); await new Promise(resolve => setTimeout(resolve, 220)); await mouse.setPosition(new Point(x, y)); await mouse.click(Button.LEFT);
+      if (action.type === "search") { await keyboard.type(query); await keyboard.pressKey(Key.Enter); }
+      await new Promise(resolve => setTimeout(resolve, 350)); windowRef.show();
+    }
+    return { ok: true, target: selectedSource.name };
+  } catch (error) { windowRef?.show(); return { ok: false, reason: "Browser navigation paused: " + String(error.message || error).slice(0, 160) }; }
+});
+function createWindow() {
+  const area = screen.getPrimaryDisplay().workArea, width = Math.min(980, area.width), height = Math.min(72, area.height);
+  windowRef = new BrowserWindow({
+    x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - height, width, height,
+    minWidth: Math.min(700, width), minHeight: 64, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: true,
+    show: false, transparent: true, backgroundColor: "#00000000", focusable: true, hasShadow: true,
+    webPreferences: { preload: path.join(__dirname, "desktop-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  windowRef.loadFile(path.join(__dirname, "popup.html"));
+  windowRef.once("ready-to-show", () => { windowRef.show(); windowRef.focus(); });
+  windowRef.on("closed", () => { windowRef = null; });
+}
+app.whenReady().then(() => { session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => { if (selectedSource) callback({ video: selectedSource }); else callback({}); }, { useSystemPicker: false }); createWindow(); }); app.on("window-all-closed", () => app.quit());
