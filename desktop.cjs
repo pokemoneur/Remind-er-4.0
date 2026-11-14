@@ -2,15 +2,20 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, shell, screen, session } =
 const path = require("node:path");
 const fs = require("node:fs");
 const { mouse, keyboard, getWindows, Button, Key, Point } = require("@nut-tree-fork/nut-js");
+app.setPath("userData", path.join(app.getPath("appData"), "remind-er-4-desktop"));
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+else app.on("second-instance", () => { if (windowRef) { if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); windowRef.focus(); windowRef.moveTop(); } });
 let windowRef, sources = new Map(), selectedSource = null;
-const stateFile = () => path.join(app.getPath("userData"), "reminder4-state.json");
+const stateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
 ipcMain.handle("remi:load", () => { try { return JSON.parse(fs.readFileSync(stateFile(), "utf8")); } catch { return {}; } });
+ipcMain.handle("remi:load-programs", () => { try { const data = JSON.parse(fs.readFileSync(stateFile(), "utf8")); return Array.isArray(data.programs) ? data.programs.filter(p => p && p.id && p.name) : []; } catch { return []; } });
 ipcMain.handle("remi:save", (_event, data) => { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify(data), "utf8"); return true; });
 ipcMain.handle("remi:pick-screen", async () => { const list = await desktopCapturer.getSources({ types: ["window", "screen"], thumbnailSize: { width: 800, height: 500 }, fetchWindowIcons: true }); sources = new Map(list.map(source => [source.id, source])); return list.map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() || "" })); });
 ipcMain.handle("remi:screen-choice", (_event, id) => { selectedSource = sources.get(id) || null; return Boolean(selectedSource); });
 ipcMain.handle("remi:focus-selected", async () => { if (!selectedSource) return { ok: false, reason: "Choose a browser window first." }; try { const targetWindow = await findSelectedWindow(await getWindows()); if (!targetWindow) return { ok: false, reason: "The selected browser window is no longer available. Choose it again." }; await targetWindow.focus(); return { ok: true, target: selectedSource.name }; } catch (error) { return { ok: false, reason: "Could not bring the selected login page forward: " + String(error.message || error).slice(0, 160) }; } });
 ipcMain.handle("remi:screen-clear", () => { selectedSource = null; return true; });
-ipcMain.on("remi:resize", (_event, height) => { if (!windowRef) return; const display = screen.getDisplayMatching(windowRef.getBounds()), area = display.workArea, h = Math.min(area.height, Math.max(64, Math.round(height))), width = Math.min(area.width, h <= 72 ? 980 : 1080); windowRef.setBounds({ x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - h, width, height: h }); });
+ipcMain.handle("remi:raise", () => { if (!windowRef) return false; if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); windowRef.focus(); windowRef.moveTop(); return true; });ipcMain.on("remi:resize", (_event, height) => { if (!windowRef) return; const display = screen.getDisplayMatching(windowRef.getBounds()), area = display.workArea, h = Math.min(area.height, Math.max(64, Math.round(height))), width = Math.min(area.width, h <= 72 ? 980 : 1080); windowRef.setBounds({ x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - h, width, height: h }); });
 ipcMain.on("remi:open-url", (_event, value) => { try { const url = new URL(value); if (["http:", "https:"].includes(url.protocol)) shell.openExternal(url.href); } catch {} });
 ipcMain.on("remi:quit", () => app.quit());
 async function findSelectedWindow(windows) { const sourceHandle = /^window:(\d+)(?::|$)/.exec(String(selectedSource?.id || ""))?.[1]; for (const win of windows) { try { if (sourceHandle && Number(win.windowHandle) === Number(sourceHandle)) return win; if (String(await win.title).trim() === String(selectedSource?.name || "").trim()) return win; } catch {} } return null; }
@@ -42,7 +47,7 @@ ipcMain.handle("remi:navigate", async (_event, action) => {
   } catch (error) { windowRef?.show(); return { ok: false, reason: "Browser navigation paused: " + String(error.message || error).slice(0, 160) }; }
 });
 function createWindow() {
-  const area = screen.getPrimaryDisplay().workArea, width = Math.min(980, area.width), height = Math.min(72, area.height);
+  const area = screen.getPrimaryDisplay().workArea, width = Math.min(1080, area.width), height = Math.min(520, area.height);
   windowRef = new BrowserWindow({
     x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - height, width, height,
     minWidth: Math.min(700, width), minHeight: 64, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: true,
@@ -53,4 +58,4 @@ function createWindow() {
   windowRef.once("ready-to-show", () => { windowRef.show(); windowRef.focus(); });
   windowRef.on("closed", () => { windowRef = null; });
 }
-app.whenReady().then(() => { session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => { if (selectedSource) callback({ video: selectedSource }); else callback({}); }, { useSystemPicker: false }); createWindow(); }); app.on("window-all-closed", () => app.quit());
+if (hasSingleInstanceLock) app.whenReady().then(() => { session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => { if (selectedSource) callback({ video: selectedSource }); else callback({}); }, { useSystemPicker: false }); createWindow(); }); app.on("window-all-closed", () => app.quit());
