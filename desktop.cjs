@@ -9,7 +9,7 @@ else app.on("second-instance", () => { if (windowRef) { if (windowRef.isMinimize
 let windowRef, sources = new Map(), selectedSource = null;
 const stateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
 ipcMain.handle("remi:load", () => { try { return JSON.parse(fs.readFileSync(stateFile(), "utf8")); } catch { return {}; } });
-ipcMain.handle("remi:load-programs", () => { try { const data = JSON.parse(fs.readFileSync(stateFile(), "utf8")); return Array.isArray(data.programs) ? data.programs.filter(p => p && p.id && p.name) : []; } catch { return []; } });
+ipcMain.handle("remi:load-programs", () => { try { const data = JSON.parse(fs.readFileSync(stateFile(), "utf8")); return Array.isArray(data.programs) ? data.programs.filter(p => p && typeof p === "object" && !Array.isArray(p)) : []; } catch { return []; } });
 ipcMain.handle("remi:save", (_event, data) => { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify(data), "utf8"); return true; });
 ipcMain.handle("remi:pick-screen", async () => { const list = await desktopCapturer.getSources({ types: ["window", "screen"], thumbnailSize: { width: 800, height: 500 }, fetchWindowIcons: true }); sources = new Map(list.map(source => [source.id, source])); return list.map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() || "" })); });
 ipcMain.handle("remi:screen-choice", (_event, id) => { selectedSource = sources.get(id) || null; return Boolean(selectedSource); });
