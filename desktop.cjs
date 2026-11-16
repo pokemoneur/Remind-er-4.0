@@ -1,16 +1,47 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, shell, screen, session } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, shell, screen, session, net } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { mouse, keyboard, getWindows, Button, Key, Point } = require("@nut-tree-fork/nut-js");
 app.setPath("userData", path.join(app.getPath("appData"), "remind-er-4-desktop"));
+app.setAppUserModelId("com.reminder4.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 else app.on("second-instance", () => { if (windowRef) { if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); windowRef.focus(); windowRef.moveTop(); } });
 let windowRef, sources = new Map(), selectedSource = null;
-const stateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
-ipcMain.handle("remi:load", () => { try { return JSON.parse(fs.readFileSync(stateFile(), "utf8")); } catch { return {}; } });
-ipcMain.handle("remi:load-programs", () => { try { const data = JSON.parse(fs.readFileSync(stateFile(), "utf8")); return Array.isArray(data.programs) ? data.programs.filter(p => p && typeof p === "object" && !Array.isArray(p)) : []; } catch { return []; } });
+const stateFile = () => path.join(app.getPath("userData"), "reminder4-state.json");
+const legacyStateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
+function readState() {
+  const states = [];
+  for (const file of [...new Set([legacyStateFile(), stateFile()])]) {
+    try { const data = JSON.parse(fs.readFileSync(file, "utf8")); if (data && typeof data === "object" && !Array.isArray(data)) states.push(data); } catch {}
+  }
+  const combined = Object.assign({}, ...states);
+  const mergeRecords = keyOf => {
+    const records = new Map();
+    for (const data of states) for (const item of Array.isArray(data[keyOf]) ? data[keyOf] : []) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const key = String(item.id || `${item.name || item.program || item.title || ""}|${item.version || ""}`);
+      records.set(key, { ...records.get(key), ...item });
+    }
+    return [...records.values()];
+  };
+  combined.programs = mergeRecords("programs");
+  combined.demos = mergeRecords("demos");
+  return combined;
+}
+ipcMain.handle("remi:load", () => readState());
+ipcMain.handle("remi:load-programs", () => readState().programs);
 ipcMain.handle("remi:save", (_event, data) => { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify(data), "utf8"); return true; });
+ipcMain.handle("remi:nvidia-request", async (event, request = {}) => {
+  if (event.sender !== windowRef?.webContents) throw new Error("This NVIDIA request is not from Remind-er.");
+  const endpoint = String(request.endpoint || "").trim(), key = String(request.key || "").trim(), body = String(request.body || "");
+  let target; try { target = new URL(endpoint); } catch { throw new Error("Enter a valid NVIDIA API address in Settings."); }
+  if (target.protocol !== "https:" || !(target.hostname === "nvidia.com" || target.hostname.endsWith(".nvidia.com")) || (target.pathname.endsWith("/") ? target.pathname.slice(0, -1) : target.pathname) !== "/v1/chat/completions") throw new Error("Use NVIDIA HTTPS Chat Completions endpoint in Settings.");
+  if (!key) throw new Error("Add your NVIDIA API key in Settings first.");
+  if (!body || body.length > 150_000_000) throw new Error("This NVIDIA request is empty or too large.");
+  const response = await net.fetch(target.href, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key, "Accept": "application/json" }, body });
+  return { ok: response.ok, status: response.status, statusText: response.statusText, body: (await response.text()).slice(0, 32_000_000) };
+});
 ipcMain.handle("remi:pick-screen", async () => { const list = await desktopCapturer.getSources({ types: ["window", "screen"], thumbnailSize: { width: 800, height: 500 }, fetchWindowIcons: true }); sources = new Map(list.map(source => [source.id, source])); return list.map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() || "" })); });
 ipcMain.handle("remi:screen-choice", (_event, id) => { selectedSource = sources.get(id) || null; return Boolean(selectedSource); });
 ipcMain.handle("remi:focus-selected", async () => { if (!selectedSource) return { ok: false, reason: "Choose a browser window first." }; try { const targetWindow = await findSelectedWindow(await getWindows()); if (!targetWindow) return { ok: false, reason: "The selected browser window is no longer available. Choose it again." }; await targetWindow.focus(); return { ok: true, target: selectedSource.name }; } catch (error) { return { ok: false, reason: "Could not bring the selected login page forward: " + String(error.message || error).slice(0, 160) }; } });
@@ -50,10 +81,11 @@ function createWindow() {
   const area = screen.getPrimaryDisplay().workArea, width = Math.min(1080, area.width), height = Math.min(520, area.height);
   windowRef = new BrowserWindow({
     x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - height, width, height,
-    minWidth: Math.min(700, width), minHeight: 64, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: true,
+    minWidth: Math.min(700, width), minHeight: 64, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: false, icon: path.join(__dirname, "assets", "reminder4-icon.ico"),
     show: false, transparent: true, backgroundColor: "#00000000", focusable: true, hasShadow: true,
-    webPreferences: { preload: path.join(__dirname, "desktop-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true }
+    webPreferences: { preload: path.join(__dirname, "desktop-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true }
   });
+  windowRef.on("focus", () => { if (windowRef && windowRef.getBounds().height <= 72) windowRef.webContents.send("remi:taskbar-activate"); });
   windowRef.loadFile(path.join(__dirname, "popup.html"));
   windowRef.once("ready-to-show", () => { windowRef.show(); windowRef.focus(); });
   windowRef.on("closed", () => { windowRef = null; });
