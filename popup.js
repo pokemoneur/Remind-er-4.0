@@ -178,8 +178,8 @@ function parseJson(s) { try{return JSON.parse(s)}catch{} const a=s.indexOf("{"),
 async function apiCall(instructions, data, assets=[], overrides={}) {
   const currentProvider=$("api-provider")?.value||"openai", stored=await chrome.storage.local.get(["apiProvider","apiKey","apiEndpoint","apiModel","nvidiaApiKey","nvidiaApiEndpoint","nvidiaApiModel"]), provider=overrides.provider||currentProvider||stored.apiProvider||"openai", key=Object.hasOwn(overrides,"key")?overrides.key:(provider==="nvidia"?($("api-key")?.value.trim()||stored.nvidiaApiKey):($("api-key")?.value.trim()||stored.apiKey));
   if(!key)throw new Error("Add your AI provider API key in Settings first.");
-  let endpoint=(overrides.endpoint??($("api-endpoint")?.value.trim()||(provider==="nvidia"?stored.nvidiaApiEndpoint:stored.apiEndpoint)||(provider==="nvidia"?NVIDIA_API_DEFAULT:API_DEFAULT))).trim();if(provider==="nvidia"){const endpointUrl=new URL(endpoint);if(endpointUrl.pathname==="/"||endpointUrl.pathname==="/v1")endpointUrl.pathname="/v1/chat/completions";endpoint=endpointUrl.toString()}
-  let url; try{url=new URL(endpoint)}catch{throw new Error("Enter a valid API address in Settings.")}
+  let endpoint=(overrides.endpoint??($("api-endpoint")?.value.trim()||(provider==="nvidia"?stored.nvidiaApiEndpoint:stored.apiEndpoint)||(provider==="nvidia"?NVIDIA_API_DEFAULT:API_DEFAULT))).trim();
+  let url; try{url=new URL(endpoint);if(provider==="nvidia"&&(url.pathname==="/"||url.pathname==="/v1")){url.pathname="/v1/chat/completions";endpoint=url.toString()}}catch{throw new Error("Enter a valid API address in Settings.")}
   if(url.protocol!=="https:")throw new Error("For safety, the AI endpoint must use HTTPS.");
   const content=[{type:provider==="nvidia"?"text":"input_text",text:typeof data==="string"?data:JSON.stringify(data)}];let requestAssets=assets.slice(0,12);
   if(provider==="nvidia"){const images=requestAssets.filter(a=>a.type?.startsWith("image/"));if(images.length>8){const keep=new Set(Array.from({length:8},(_,i)=>images[Math.round(i*(images.length-1)/7)]));requestAssets=requestAssets.filter(a=>!a.type?.startsWith("image/")||keep.has(a))}}
