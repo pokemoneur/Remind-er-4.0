@@ -62,3 +62,5 @@ body.bar-standalone.collapsed .bar-content{display:flex}
 .program-guide-details{margin:8px 0}.program-guide-details summary{cursor:pointer;font-weight:700;color:var(--accent,#157eaa)}.program-guide-details h3{margin:8px 0 3px}.program-guide-text{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:12px;background:rgba(127,127,127,.08);padding:8px;border-radius:6px}.program-card>button{margin:4px 6px 0 0}
 
 #settings-message[aria-busy="true"]{border-color:#5d9bd0;background:#e6f2fc;color:#1e4f78;font-weight:600}
+
+.toast.error{border-color:#d99090;background:#fff0f0;color:#782424}
