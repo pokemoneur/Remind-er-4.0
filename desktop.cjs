@@ -34,22 +34,25 @@ ipcMain.handle("remi:load-programs", () => readState().programs);
 ipcMain.handle("remi:save", (_event, data) => { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify(data), "utf8"); return true; });
 ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   if (event.sender !== windowRef?.webContents) throw new Error("This AI request is not from Remind-er.");
+  const fail = (message, status = 400) => ({ ok: false, status, statusText: "Request setup failed", error: String(message) });
   const provider = request.provider === "nvidia" ? "nvidia" : "openai";
   const endpoint = String(request.endpoint || "").trim(), key = String(request.key || "").trim(), body = String(request.body || "");
-  let target; try { target = new URL(endpoint); } catch { throw new Error("Enter a valid " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " API address in Settings."); }
+  let target; try { target = new URL(endpoint); } catch { return fail("Enter a valid " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " API address in Settings."); }
   const expectedHost = provider === "nvidia" ? "integrate.api.nvidia.com" : "api.openai.com";
   const expectedPath = provider === "nvidia" ? "/v1/chat/completions" : "/v1/responses";
-  if (target.protocol !== "https:" || target.hostname !== expectedHost || (target.pathname.endsWith("/") ? target.pathname.slice(0, -1) : target.pathname) !== expectedPath) throw new Error("Use the official " + (provider === "nvidia" ? "NVIDIA Chat Completions" : "OpenAI Responses") + " HTTPS endpoint in Settings.");
-  if (!key) throw new Error("Add your " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " API key in Settings first.");
-  if (!body || body.length > 150_000_000) throw new Error("This " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " request is empty or too large.");
+  const acceptablePaths = new Set(["/", "/v1", expectedPath, expectedPath + "/"]);
+  if (target.protocol !== "https:" || target.hostname.toLowerCase() !== expectedHost || target.username || target.password || !acceptablePaths.has(target.pathname)) return fail("Use https://" + expectedHost + expectedPath + " in Settings. Current address has host " + target.host + " and path " + target.pathname + ".");
+  target.pathname = expectedPath; target.search = ""; target.hash = "";
+  if (!key) return fail("Add your " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " API key in Settings first.");
+  if (!body || body.length > 150_000_000) return fail("This " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " request is empty or too large.");
   const controller = new AbortController(), timeoutMs = request.testConnection ? 25_000 : 90_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await net.fetch(target.href, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key, "Accept": "application/json" }, body, signal: controller.signal });
     return { ok: response.ok, status: response.status, statusText: response.statusText, body: (await response.text()).slice(0, 32_000_000) };
   } catch (error) {
-    if (controller.signal.aborted) throw new Error((request.testConnection ? "Connection test" : "AI request") + " timed out after " + Math.round(timeoutMs / 1000) + " seconds while reaching " + expectedHost + ". Check internet access, firewall, and the API address.");
-    throw new Error("Could not reach " + expectedHost + ". Check your internet connection or firewall. " + String(error?.message || error).slice(0, 180));
+    if (controller.signal.aborted) return fail((request.testConnection ? "Connection test" : "AI request") + " timed out after " + Math.round(timeoutMs / 1000) + " seconds while reaching " + expectedHost + ". Check internet access, firewall, and the API address.", 408);
+    return fail("Could not reach " + expectedHost + ". Check your internet connection or firewall. " + String(error?.message || error).slice(0, 180), 0);
   } finally { clearTimeout(timeout); }
 });
 ipcMain.handle("remi:pick-screen", async () => { const list = await desktopCapturer.getSources({ types: ["window", "screen"], thumbnailSize: { width: 800, height: 500 }, fetchWindowIcons: true }); sources = new Map(list.map(source => [source.id, source])); return list.map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), appIcon: source.appIcon?.toDataURL() || "" })); });
