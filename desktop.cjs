@@ -48,8 +48,22 @@ ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   const controller = new AbortController(), timeoutMs = request.testConnection ? 25_000 : 90_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    let modelListed = null, availableModels = [];
+    if (request.testConnection && provider === "nvidia") {
+      const modelsUrl = new URL("/v1/models", target.origin);
+      const catalogResponse = await net.fetch(modelsUrl.href, { method: "GET", headers: { "Authorization": "Bearer " + key, "Accept": "application/json" }, signal: controller.signal });
+      const catalogText = await catalogResponse.text();
+      if (!catalogResponse.ok) return fail("NVIDIA model-list check returned HTTP " + catalogResponse.status + ". The key or NVIDIA API access was rejected before testing inference.", catalogResponse.status);
+      let catalog = {}; try { catalog = JSON.parse(catalogText); } catch {}
+      const requestedModel = String(request.model || "").trim();
+      availableModels = Array.isArray(catalog.data) ? [...new Set(catalog.data.map(item => String(item?.id || "").trim()).filter(Boolean))].slice(0, 30) : [];
+      modelListed = availableModels.includes(requestedModel);
+
+    }
     const response = await net.fetch(target.href, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key, "Accept": "application/json" }, body, signal: controller.signal });
-    return { ok: response.ok, status: response.status, statusText: response.statusText, body: (await response.text()).slice(0, 32_000_000) };
+    let responseBody = (await response.text()).slice(0, 32_000_000);
+    if (!response.ok && provider === "nvidia" && availableModels.length) { let parsed = {}; try { parsed = JSON.parse(responseBody); } catch {} const original = parsed.error, detail = typeof original === "string" ? original : original?.message || parsed.message || "NVIDIA rejected this model for the selected key."; parsed.error = { message: detail, available_models: availableModels }; responseBody = JSON.stringify(parsed); }
+    return { ok: response.ok, status: response.status, statusText: response.statusText, body: responseBody, modelListed, availableModels };
   } catch (error) {
     if (controller.signal.aborted) return fail((request.testConnection ? "Connection test" : "AI request") + " timed out after " + Math.round(timeoutMs / 1000) + " seconds while reaching " + expectedHost + ". Check internet access, firewall, and the API address.", 408);
     return fail("Could not reach " + expectedHost + ". Check your internet connection or firewall. " + String(error?.message || error).slice(0, 180), 0);
