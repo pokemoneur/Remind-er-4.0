@@ -12,7 +12,7 @@ const stateFile = () => path.join(app.getPath("userData"), "reminder4-state.json
 const legacyStateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
 function readState() {
   const states = [];
-  for (const file of [...new Set([legacyStateFile(), stateFile()])]) {
+  for (const file of [...new Set([legacyStateFile(), legacyStateFile() + ".bak", stateFile(), stateFile() + ".bak"])]) {
     try { const data = JSON.parse(fs.readFileSync(file, "utf8")); if (data && typeof data === "object" && !Array.isArray(data)) states.push(data); } catch {}
   }
   const combined = Object.assign({}, ...states);
@@ -31,7 +31,7 @@ function readState() {
 }
 ipcMain.handle("remi:load", () => readState());
 ipcMain.handle("remi:load-programs", () => readState().programs);
-ipcMain.handle("remi:save", (_event, data) => { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(stateFile(), JSON.stringify(data), "utf8"); return true; });
+ipcMain.handle("remi:save", (_event, data) => { const file = stateFile(), temp = file + ".tmp"; fs.mkdirSync(path.dirname(file), { recursive: true }); try { JSON.parse(fs.readFileSync(file, "utf8")); fs.copyFileSync(file, file + ".bak"); } catch {} fs.writeFileSync(temp, JSON.stringify(data), "utf8"); fs.renameSync(temp, file); return true; });
 ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   if (event.sender !== windowRef?.webContents) throw new Error("This AI request is not from Remind-er.");
   const fail = (message, status = 400) => ({ ok: false, status, statusText: "Request setup failed", error: String(message) });
