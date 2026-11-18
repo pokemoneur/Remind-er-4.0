@@ -72,3 +72,22 @@ body.bar-standalone.collapsed .bar-content{display:flex}
 #demo-instruction,#demo-target,#demo-outcome{line-height:1.55}
 #demo-result:fullscreen{padding:24px 32px;background:#f4f6fa}
 #demo-result:fullscreen .demo-monitor{border-width:10px;border-radius:20px}
+.demo-monitor{width:100%;height:auto;min-height:0;max-height:70vh;aspect-ratio:var(--demo-aspect,1.7778);overflow:hidden}
+.demo-scene{max-width:100%;max-height:100%;transform-origin:top left}
+.demo-scene img{max-width:100%;max-height:100%;object-fit:contain}
+#demo-result:fullscreen .demo-monitor{width:min(100%,calc(70vh * var(--demo-aspect,1.7778)));height:auto;min-height:0;max-height:none;aspect-ratio:var(--demo-aspect,1.7778);margin-inline:auto}
+#demo-result:fullscreen .demo-scene,#demo-result:fullscreen .demo-scene img{max-width:100%;max-height:100%}
+.demo-review-panel{margin-top:16px;padding:15px;border:1px solid #c8d3e0;border-radius:14px;background:#f8fafc;box-shadow:0 8px 24px #17203312}
+.demo-review-panel[hidden]{display:none!important}
+.demo-review-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.demo-review-heading h2{margin:0 0 4px;font-size:17px}
+.demo-review-thread{display:flex;flex-direction:column;gap:9px;max-height:250px;overflow:auto;margin:12px 0;padding:4px}
+.demo-review-bubble{max-width:92%;padding:10px 12px;border:1px solid #d7dee8;border-radius:12px;background:#fff;color:#253247;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.demo-review-bubble.user{align-self:flex-end;background:#e8f4ff;border-color:#b8d8ef}
+.demo-review-bubble.remi{align-self:flex-start}
+.demo-review-panel textarea{width:100%;resize:vertical;min-height:76px;border:1px solid #bac7d5;border-radius:9px;padding:10px;font:inherit;color:var(--ink);background:var(--surface)}
+.demo-review-panel .row{align-items:center}
+.idle-work-log{max-height:220px;overflow:auto;margin:8px 0 14px;padding:0 0 0 24px;color:var(--ink);font-size:12px;line-height:1.55}
+.idle-work-log li{padding:5px 0;border-bottom:1px solid #e3e9ef;overflow-wrap:anywhere}
+.idle-work-log .muted{color:var(--muted)}
+@media(max-width:620px){.demo-review-heading{gap:6px}.demo-review-thread{max-height:200px}.demo-review-panel{padding:10px}.demo-review-bubble{max-width:98%}#demo-result:fullscreen{padding:10px}#demo-result:fullscreen .demo-monitor{width:100%;height:auto;min-height:0;aspect-ratio:var(--demo-aspect,1.7778)}}
