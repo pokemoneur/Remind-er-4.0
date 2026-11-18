@@ -9,29 +9,66 @@ if (!hasSingleInstanceLock) app.quit();
 else app.on("second-instance", () => { if (windowRef) { if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); windowRef.focus(); windowRef.moveTop(); } });
 let windowRef, sources = new Map(), selectedSource = null;
 const stateFile = () => path.join(app.getPath("userData"), "reminder4-state.json");
-const legacyStateFile = () => path.join(process.env.APPDATA || app.getPath("appData"), "remind-er-4-desktop", "reminder4-state.json");
+const stateCandidates = () => {
+  const appData = process.env.APPDATA || app.getPath("appData");
+  return [...new Set([
+    stateFile(), stateFile() + ".bak",
+    path.join(appData, "remind-er-4-desktop", "reminder4-state.json"),
+    path.join(appData, "remind-er-4-desktop", "reminder4-state.json.bak"),
+    path.join(appData, "Remind-er 4.0", "reminder4-state.json"),
+    path.join(appData, "Remind-er 4.0", "reminder4-state.json.bak"),
+    path.join(appData, "Remind-er 4.0", "remind-er-state.json"),
+    path.join(appData, "Remind-er", "reminder4-state.json"),
+  ])];
+};
 function readState() {
-  const states = [];
-  for (const file of [...new Set([legacyStateFile(), legacyStateFile() + ".bak", stateFile(), stateFile() + ".bak"])]) {
-    try { const data = JSON.parse(fs.readFileSync(file, "utf8")); if (data && typeof data === "object" && !Array.isArray(data)) states.push(data); } catch {}
+  const valid = [];
+  for (const [order, file] of stateCandidates().entries()) {
+    try {
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        valid.push({ data, file, order, modified: fs.statSync(file).mtimeMs });
+      }
+    } catch {}
   }
-  const combined = Object.assign({}, ...states);
-  const mergeRecords = keyOf => {
-    const records = new Map();
-    for (const data of states) for (const item of Array.isArray(data[keyOf]) ? data[keyOf] : []) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-      const key = String(item.id || `${item.name || item.program || item.title || ""}|${item.version || ""}`);
-      records.set(key, { ...records.get(key), ...item });
-    }
-    return [...records.values()];
-  };
-  combined.programs = mergeRecords("programs");
-  combined.demos = mergeRecords("demos");
+  // Prefer the most recently written valid save. This recovers an older app-data
+  // location when a fresh install created an empty state file in the new location,
+  // without merging stale backups over intentional updates or deletions.
+  valid.sort((a, b) => b.modified - a.modified || a.order - b.order);
+  const combined = valid[0]?.data || {};
+  combined.programs = Array.isArray(combined.programs) ? combined.programs : [];
+  combined.demos = Array.isArray(combined.demos) ? combined.demos : [];
   return combined;
 }
 ipcMain.handle("remi:load", () => readState());
 ipcMain.handle("remi:load-programs", () => readState().programs);
-ipcMain.handle("remi:save", (_event, data) => { const file = stateFile(), temp = file + ".tmp"; fs.mkdirSync(path.dirname(file), { recursive: true }); try { JSON.parse(fs.readFileSync(file, "utf8")); fs.copyFileSync(file, file + ".bak"); } catch {} fs.writeFileSync(temp, JSON.stringify(data), "utf8"); fs.renameSync(temp, file); return true; });
+ipcMain.handle("remi:save", (_event, data) => {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Refusing to save an invalid Remind-er data file.");
+  const file = stateFile(), backup = file + ".bak", temp = file + "." + process.pid + ".tmp";
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(temp, JSON.stringify(data), "utf8");
+  const fd = fs.openSync(temp, "r");
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  let hasValidCurrent = false;
+  try { const prior = JSON.parse(fs.readFileSync(file, "utf8")); hasValidCurrent = Boolean(prior && typeof prior === "object" && !Array.isArray(prior)); } catch {}
+  if (hasValidCurrent) {
+    try { fs.rmSync(backup, { force: true }); } catch {}
+    try { fs.renameSync(file, backup); }
+    catch { fs.copyFileSync(file, backup); fs.unlinkSync(file); }
+  } else if (fs.existsSync(file)) {
+    const damaged = file + ".corrupt-" + Date.now();
+    try { fs.renameSync(file, damaged); } catch { fs.rmSync(file, { force: true }); }
+  }
+  try { fs.renameSync(temp, file); }
+  catch (error) {
+    if (!fs.existsSync(file) && fs.existsSync(backup)) {
+      try { fs.renameSync(backup, file); } catch { fs.copyFileSync(backup, file); }
+    }
+    try { fs.rmSync(temp, { force: true }); } catch {}
+    throw error;
+  }
+  return true;
+});
 ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   if (event.sender !== windowRef?.webContents) throw new Error("This AI request is not from Remind-er.");
   const fail = (message, status = 400) => ({ ok: false, status, statusText: "Request setup failed", error: String(message) });
