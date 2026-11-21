@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("remiDesktop", {
-  load: () => ipcRenderer.invoke("remi:load"), loadPrograms: () => ipcRenderer.invoke("remi:load-programs"), save: data => ipcRenderer.invoke("remi:save", data),
+  load: () => ipcRenderer.invoke("remi:load"), loadPrograms: () => ipcRenderer.invoke("remi:load-programs"), save: data => ipcRenderer.invoke("remi:save", data), purgeProfileData: profile => ipcRenderer.invoke("remi:purge-profile-data", profile),
   pickScreen: () => ipcRenderer.invoke("remi:pick-screen"), chooseScreen: id => ipcRenderer.invoke("remi:screen-choice", id),
   aiRequest: request => ipcRenderer.invoke("remi:ai-request", request),
   clearScreen: () => ipcRenderer.send("remi:screen-clear"), resize: height => ipcRenderer.send("remi:resize", height), raise: () => ipcRenderer.invoke("remi:raise"),

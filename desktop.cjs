@@ -2,73 +2,188 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, shell, screen, session, ne
 const path = require("node:path");
 const fs = require("node:fs");
 const { mouse, keyboard, getWindows, Button, Key, Point } = require("@nut-tree-fork/nut-js");
-app.setPath("userData", path.join(app.getPath("appData"), "remind-er-4-desktop"));
-app.setAppUserModelId("com.reminder4.desktop");
+app.setPath("userData", path.join(app.getPath("appData"), "remind-er-4-desktop-repair-v2"));
+app.setAppUserModelId("com.reminder4.desktop.repair.v2");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 else app.on("second-instance", () => { if (windowRef) { if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); windowRef.focus(); windowRef.moveTop(); } });
 let windowRef, sources = new Map(), selectedSource = null;
 const stateFile = () => path.join(app.getPath("userData"), "reminder4-state.json");
+const profileLibraryFile = () => path.join(app.getPath("userData"), "reminder4-profiles.json");
+function currentSnapshotsOnly(candidates){let newestStable=0;for(const file of candidates)if(!/\.\d+\.tmp$/.test(file))try{newestStable=Math.max(newestStable,fs.statSync(file).mtimeMs)}catch{}return[...new Set(candidates.filter(file=>{if(!/\.\d+\.tmp$/.test(file))return true;try{return fs.statSync(file).mtimeMs>newestStable}catch{return false}}))]}
+function selectCurrentSnapshots(rows,stableLimit=2){const stable=rows.filter(row=>!/\.\d+\.tmp$/.test(row.file)).sort((a,b)=>b.modified-a.modified||a.order-b.order),newestStable=stable[0]?.modified||0,pending=rows.filter(row=>/\.\d+\.tmp$/.test(row.file)&&row.modified>newestStable).sort((a,b)=>b.modified-a.modified||a.order-b.order).slice(0,2);return[...stable.slice(0,stableLimit),...pending].sort((a,b)=>b.modified-a.modified||a.order-b.order)}
+const profileLibraryCandidates = () => {
+  const appData = process.env.APPDATA || app.getPath("appData"), name = path.basename(profileLibraryFile());
+  const directories = [...new Set([path.dirname(profileLibraryFile()), path.join(appData, "Remind-er 4.0"), path.join(appData, "Remind-er"), path.join(appData, "remind-er-4-desktop"), path.join(appData, "remind-er-4-desktop-repair")])];
+  const candidates = [];
+  for (const directory of directories) {
+    const file = path.join(directory, name), prefix = name + ".";
+    candidates.push(file, file + ".bak");
+    try { candidates.push(...fs.readdirSync(directory).filter(entry => entry.startsWith(prefix) && /^\d+\.tmp$/.test(entry.slice(prefix.length))).map(entry => path.join(directory, entry))); } catch {}
+  }
+  return currentSnapshotsOnly(candidates);
+};
 const stateCandidates = () => {
   const appData = process.env.APPDATA || app.getPath("appData");
-  return [...new Set([
-    stateFile(), stateFile() + ".bak",
+  const primary = stateFile(), tempPrefix = path.basename(primary) + ".";
+  let interruptedWrites = [];
+  try {
+    interruptedWrites = fs.readdirSync(path.dirname(primary))
+      .filter(name => name.startsWith(tempPrefix) && /^\d+\.tmp$/.test(name.slice(tempPrefix.length)))
+      .map(name => path.join(path.dirname(primary), name));
+  } catch {}
+  return currentSnapshotsOnly([...new Set([
+    primary, primary + ".bak", ...interruptedWrites,
     path.join(appData, "remind-er-4-desktop", "reminder4-state.json"),
     path.join(appData, "remind-er-4-desktop", "reminder4-state.json.bak"),
+    path.join(appData, "remind-er-4-desktop-repair", "reminder4-state.json"),
+    path.join(appData, "remind-er-4-desktop-repair", "reminder4-state.json.bak"),
     path.join(appData, "Remind-er 4.0", "reminder4-state.json"),
     path.join(appData, "Remind-er 4.0", "reminder4-state.json.bak"),
     path.join(appData, "Remind-er 4.0", "remind-er-state.json"),
     path.join(appData, "Remind-er", "reminder4-state.json"),
-  ])];
+  ])]);
 };
-function readState() {
-  const valid = [];
-  for (const [order, file] of stateCandidates().entries()) {
-    try {
-      const data = JSON.parse(fs.readFileSync(file, "utf8"));
-      if (data && typeof data === "object" && !Array.isArray(data)) {
-        valid.push({ data, file, order, modified: fs.statSync(file).mtimeMs });
-      }
-    } catch {}
-  }
-  // Prefer the most recently written valid save. This recovers an older app-data
-  // location when a fresh install created an empty state file in the new location,
-  // without merging stale backups over intentional updates or deletions.
-  valid.sort((a, b) => b.modified - a.modified || a.order - b.order);
-  const combined = valid[0]?.data || {};
-  combined.programs = Array.isArray(combined.programs) ? combined.programs : [];
-  combined.demos = Array.isArray(combined.demos) ? combined.demos : [];
-  return combined;
-}
-ipcMain.handle("remi:load", () => readState());
-ipcMain.handle("remi:load-programs", () => readState().programs);
-ipcMain.handle("remi:save", (_event, data) => {
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Refusing to save an invalid Remind-er data file.");
-  const file = stateFile(), backup = file + ".bak", temp = file + "." + process.pid + ".tmp";
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(temp, JSON.stringify(data), "utf8");
-  const fd = fs.openSync(temp, "r");
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  let hasValidCurrent = false;
-  try { const prior = JSON.parse(fs.readFileSync(file, "utf8")); hasValidCurrent = Boolean(prior && typeof prior === "object" && !Array.isArray(prior)); } catch {}
-  if (hasValidCurrent) {
-    try { fs.rmSync(backup, { force: true }); } catch {}
-    try { fs.renameSync(file, backup); }
-    catch { fs.copyFileSync(file, backup); fs.unlinkSync(file); }
-  } else if (fs.existsSync(file)) {
-    const damaged = file + ".corrupt-" + Date.now();
-    try { fs.renameSync(file, damaged); } catch { fs.rmSync(file, { force: true }); }
-  }
-  try { fs.renameSync(temp, file); }
-  catch (error) {
-    if (!fs.existsSync(file) && fs.existsSync(backup)) {
-      try { fs.renameSync(backup, file); } catch { fs.copyFileSync(backup, file); }
+async function readState(){const io=fs.promises,candidates=[];for(const[order,file]of stateCandidates().entries())try{const stat=await io.stat(file);candidates.push({file,order,modified:stat.mtimeMs})}catch{}const snapshots=[];for(const candidate of selectCurrentSnapshots(candidates)){try{const data=JSON.parse(await io.readFile(candidate.file,"utf8"));if(data&&typeof data==="object"&&!Array.isArray(data))snapshots.push({...candidate,data})}catch{}}const newest=snapshots[0]?.data||{},combined={...newest};for(const snapshot of snapshots.slice(1))for(const[key,value]of Object.entries(snapshot.data))if(!Object.prototype.hasOwnProperty.call(combined,key))combined[key]=value;const chronological=snapshots.slice().reverse().map(item=>item.data);combined.programs=mergeSavedProfiles(...chronological.map(item=>item.programs));combined.demos=mergeSavedRows(...chronological.map(item=>item.demos));try{const library=await readProfileLibrary();combined.programs=mergeSavedProfiles(combined.programs,library.programs)}catch(error){console.warn("Remind-er profile library could not be refreshed:",error?.message||error)}return combined}
+function mergeSavedProfiles(...lists) {
+  const rows = [], positions = new Map();
+  for (const list of lists) for (const row of Array.isArray(list) ? list : []) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const id = String(row.id || "").trim(), key = id || (String(row.name || "").trim().toLowerCase() + "|" + String(row.version || "version not provided").trim().toLowerCase());
+    if (!key || key === "|") { rows.push(row); continue; }
+    if (!positions.has(key)) { positions.set(key, rows.length); rows.push(row); continue; }
+    const index = positions.get(key), merged = { ...rows[index] };
+    for (const [field, value] of Object.entries(row)) {
+      const empty = value == null || typeof value === "string" && !value.trim() || Array.isArray(value) && !value.length;
+      if (!empty || merged[field] == null || typeof merged[field] === "string" && !merged[field].trim() || Array.isArray(merged[field]) && !merged[field].length) merged[field] = value;
     }
-    try { fs.rmSync(temp, { force: true }); } catch {}
-    throw error;
+    rows[index] = merged;
+  }
+  return rows;
+}
+function mergeSavedRows(...lists) {
+  const rows = [], positions = new Map();
+  for (const list of lists) for (const row of Array.isArray(list) ? list : []) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const key = String(row.id || "").trim();
+    if (!key || !positions.has(key)) { if (key) positions.set(key, rows.length); rows.push(row); continue; }
+    const index = positions.get(key), merged = { ...rows[index] };
+    for (const [field, value] of Object.entries(row)) {
+      const empty = value == null || typeof value === "string" && !value.trim() || Array.isArray(value) && !value.length;
+      if (!empty || merged[field] == null || typeof merged[field] === "string" && !merged[field].trim() || Array.isArray(merged[field]) && !merged[field].length) merged[field] = value;
+    }
+    rows[index] = merged;
+  }
+  return rows;
+}
+async function readProfileLibrary(){const io=fs.promises,candidates=[];for(const[order,file]of profileLibraryCandidates().entries())try{const stat=await io.stat(file);candidates.push({file,order,modified:stat.mtimeMs})}catch{}const snapshots=[];for(const candidate of selectCurrentSnapshots(candidates)){try{const data=JSON.parse(await io.readFile(candidate.file,"utf8"));if(data&&typeof data==="object"&&!Array.isArray(data)&&Array.isArray(data.programs))snapshots.push(data.programs)}catch{}}return{programs:mergeSavedProfiles(...snapshots.reverse()),found:snapshots.length>0}}
+async function writeProfileLibrary(programs) {
+  const file = profileLibraryFile(), backup = file + ".bak", temp = file + "." + process.pid + ".tmp", io = fs.promises;
+  const normalized = Array.isArray(programs) ? programs : [];
+  const current = await readProfileLibrary();
+  if (current.found && JSON.stringify(current.programs) === JSON.stringify(normalized)) return true;
+  await io.mkdir(path.dirname(file), { recursive: true });
+  await io.writeFile(temp, JSON.stringify({ programs: normalized }), "utf8");
+  try {
+    try { await io.rm(backup, { force: true }); await io.rename(file, backup); }
+    catch { try { await io.copyFile(file, backup); await io.unlink(file); } catch (error) { if (error?.code !== "ENOENT") throw error; } }
+    await io.rename(temp, file);
+  } catch (error) {
+    try {
+      const pending = JSON.parse(await io.readFile(temp, "utf8"));
+      if (!pending || !Array.isArray(pending.programs)) throw error;
+      await io.utimes(temp, new Date(), new Date());
+      try {
+        await io.copyFile(temp, file);
+        const installed = JSON.parse(await io.readFile(file, "utf8"));
+        if (installed && Array.isArray(installed.programs)) { await io.rm(temp, { force: true }); return true; }
+      } catch {}
+      return true;
+    } catch { try { await io.rm(temp, { force: true }); } catch {} throw error; }
   }
   return true;
+}
+ipcMain.handle("remi:load", () => readState());
+ipcMain.handle("remi:load-programs", async () => (await readState()).programs);
+let saveQueue = Promise.resolve();
+ipcMain.handle("remi:save", (_event, data) => {
+  const pending = saveQueue.then(() => saveState(data));
+  saveQueue = pending.catch(() => {});
+  return pending;
 });
+ipcMain.handle("remi:purge-profile-data", async (event, profile = {}) => {
+  if (event.sender !== windowRef?.webContents) throw new Error("This profile deletion is not from Remind-er.");
+  const id = String(profile.id || ""), name = String(profile.name || "").trim().toLowerCase(), version = String(profile.version || "version not provided");
+  if (!id || !name) throw new Error("A saved profile identifier is required.");
+  const belongsToProfile = row => String(row?.programId || row?.frameProgramId || "") === id || String(row?.program || row?.program_name || "").trim().toLowerCase() === name && String(row?.version || row?.program_version || "version not provided") === version;
+  const removeCopies = async () => {
+    const io = fs.promises;
+    for (const file of [...stateCandidates(), ...profileLibraryCandidates()]) {
+      let state;
+      try { state = JSON.parse(await io.readFile(file, "utf8")); } catch { continue; }
+      if (!state || typeof state !== "object" || Array.isArray(state)) continue;
+      state.programs = (Array.isArray(state.programs) ? state.programs : []).filter(row => !(String(row?.id || "") === id || String(row?.name || "").trim().toLowerCase() === name && String(row?.version || "version not provided") === version));
+      state.demos = (Array.isArray(state.demos) ? state.demos : []).filter(row => !belongsToProfile(row));
+      if (state.selfLearning && (String(state.selfLearning.program?.id || "") === id || String(state.selfLearning.program?.name || "").trim().toLowerCase() === name && String(state.selfLearning.program?.version || "version not provided") === version)) state.selfLearning = null;
+      const temp = file + ".purge-" + process.pid + ".tmp";
+      await io.writeFile(temp, JSON.stringify(state), "utf8");
+      await io.rename(temp, file);
+    }
+  };
+  const pending = saveQueue.then(removeCopies);
+  saveQueue = pending.catch(() => {});
+  return pending;
+});
+async function saveState(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Refusing to save an invalid Remind-er data file.");
+  await writeProfileLibrary(data.programs);
+  const file = stateFile(), backup = file + ".bak", temp = file + "." + process.pid + ".tmp";
+  const io = fs.promises;
+  await io.mkdir(path.dirname(file), { recursive: true });
+  await io.writeFile(temp, JSON.stringify(data), "utf8");
+  let hasValidCurrent = false;
+  try { const prior = JSON.parse(await io.readFile(file, "utf8")); hasValidCurrent = Boolean(prior && typeof prior === "object" && !Array.isArray(prior)); } catch {}
+  try {
+    if (hasValidCurrent) {
+      await io.rm(backup, { force: true });
+      try { await io.rename(file, backup); }
+      catch { await io.copyFile(file, backup); await io.unlink(file); }
+    } else {
+      const damaged = file + ".corrupt-" + Date.now();
+      try { await io.rename(file, damaged); } catch { try { await io.rm(file, { force: true }); } catch {} }
+    }
+    await io.rename(temp, file);
+  } catch (error) {
+    // A completed, synced temp file is itself a durable save. Keep it when
+    // Windows or an antivirus lock prevents the final rename; readState()
+    // includes these recovery files and selects the newest valid snapshot.
+    try {
+      const pending = JSON.parse(await io.readFile(temp, "utf8"));
+      if (!pending || typeof pending !== "object" || Array.isArray(pending)) throw error;
+      await io.utimes(temp, new Date(), new Date());
+      try {
+        await io.copyFile(temp, file);
+        const installed = JSON.parse(await io.readFile(file, "utf8"));
+        if (installed && typeof installed === "object" && !Array.isArray(installed)) { await io.rm(temp, { force: true }); return true; }
+      } catch {}
+      try { await io.access(file); }
+      catch {
+        try { await io.rename(backup, file); }
+        catch { try { await io.copyFile(backup, file); } catch {} }
+      }
+      return true;
+    } catch {
+      try { await io.access(file); }
+      catch {
+        try { await io.rename(backup, file); }
+        catch { try { await io.copyFile(backup, file); } catch {} }
+      }
+      try { await io.rm(temp, { force: true }); } catch {}
+      throw error;
+    }
+  }
+  return true;
+}
 ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   if (event.sender !== windowRef?.webContents) throw new Error("This AI request is not from Remind-er.");
   const fail = (message, status = 400) => ({ ok: false, status, statusText: "Request setup failed", error: String(message) });
@@ -82,7 +197,7 @@ ipcMain.handle("remi:ai-request", async (event, request = {}) => {
   target.pathname = expectedPath; target.search = ""; target.hash = "";
   if (!key) return fail("Add your " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " API key in Settings first.");
   if (!body || body.length > 150_000_000) return fail("This " + (provider === "nvidia" ? "NVIDIA" : "OpenAI") + " request is empty or too large.");
-  const controller = new AbortController(), timeoutMs = request.testConnection ? 25_000 : 90_000;
+  const controller = new AbortController(), timeoutMs = request.testConnection ? 25_000 : Math.min(300_000, Math.max(90_000, Number(request.timeoutMs) || 90_000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     let modelListed = null, availableModels = [];
@@ -146,7 +261,7 @@ function createWindow() {
   windowRef = new BrowserWindow({
     x: area.x + Math.round((area.width - width) / 2), y: area.y + area.height - height, width, height,
     minWidth: Math.min(700, width), minHeight: 64, frame: false, resizable: false, movable: false, alwaysOnTop: true, skipTaskbar: false, icon: path.join(__dirname, "assets", "reminder4-icon.ico"),
-    show: false, transparent: true, backgroundColor: "#00000000", focusable: true, hasShadow: true,
+    show: false, transparent: true, backgroundColor: "#00000000", roundedCorners: true, focusable: true, hasShadow: true,
     webPreferences: { preload: path.join(__dirname, "desktop-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true }
   });
   windowRef.on("focus", () => { if (windowRef && windowRef.getBounds().height <= 72) windowRef.webContents.send("remi:taskbar-activate"); });
@@ -155,3 +270,10 @@ function createWindow() {
   windowRef.on("closed", () => { windowRef = null; });
 }
 if (hasSingleInstanceLock) app.whenReady().then(() => { session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => { if (selectedSource) callback({ video: selectedSource }); else callback({}); }, { useSystemPicker: false }); createWindow(); }); app.on("window-all-closed", () => app.quit());
+let quitDrainStarted = false;
+app.on("before-quit", event => {
+  if (quitDrainStarted) return;
+  event.preventDefault();
+  quitDrainStarted = true;
+  saveQueue.finally(() => app.quit());
+});

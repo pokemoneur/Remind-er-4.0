@@ -15,7 +15,7 @@
     "electron-builder": "^26.2.0"
   },
   "build": {
-    "appId": "com.reminder4.desktop",
+    "appId": "com.reminder4.desktop.repair.v2",
     "productName": "Remind-er 4.0",
     "directories": {
       "output": "release"
@@ -46,4 +46,3 @@
     "electron-winstaller": true
   }
 }
-
